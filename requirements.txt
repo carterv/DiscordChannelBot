@@ -1,0 +1,6 @@
+python-dotenv
+setuptools
+tinydb
+discord.py
+attrs
+cattrs
