@@ -66,7 +66,7 @@ class ManagedChannel:
             channel_name,
             overwrites=source_channel.overwrites,
             category=source_channel.category,
-            position=source_channel.position + 1,
+            position=source_channel.position,
         )
 
         return ManagedChannel(guild.id, new_channel.id, new_config)
