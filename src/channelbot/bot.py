@@ -63,7 +63,10 @@ class ManagedChannel:
             channel_name = self.config.template
 
         new_channel = await guild.create_voice_channel(
-            channel_name, overwrites=source_channel.overwrites, category=source_channel.category
+            channel_name,
+            overwrites=source_channel.overwrites,
+            category=source_channel.category,
+            position=source_channel.position + 1,
         )
 
         return ManagedChannel(guild.id, new_channel.id, new_config)
