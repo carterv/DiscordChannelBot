@@ -62,7 +62,9 @@ class ManagedChannel:
         except (ValueError, KeyError):
             channel_name = self.config.template
 
-        new_channel = await guild.create_voice_channel(channel_name, overwrites=source_channel.overwrites)
+        new_channel = await guild.create_voice_channel(
+            channel_name, overwrites=source_channel.overwrites, category=source_channel.category
+        )
 
         return ManagedChannel(guild.id, new_channel.id, new_config)
 
@@ -92,9 +94,7 @@ class DB:
         return structure(el, ManagedChannel)
 
     def get_children(self, spawner: ManagedChannel) -> List[ManagedChannel]:
-        all_raw_channels = self._db.search(
-            where("guild_id") == spawner.guild_id
-        )
+        all_raw_channels = self._db.search(where("guild_id") == spawner.guild_id)
         all_channels = (structure(el, ManagedChannel) for el in all_raw_channels)
         children = (c for c in all_channels if c.config.spawner and c.config.spawner[1] == spawner.channel_id)
         return sorted(children, key=lambda el: el.config.channel_number)
