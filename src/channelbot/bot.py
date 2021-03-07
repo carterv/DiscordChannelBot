@@ -5,7 +5,7 @@ from typing import Optional, Tuple, List
 
 from attr import attrs, attrib
 from cattr import unstructure, structure
-from discord import Message, Member, VoiceState, VoiceChannel, Guild, PermissionOverwrite
+from discord import Message, Member, VoiceState, VoiceChannel, Guild, PermissionOverwrite, Permissions
 from discord.ext import commands
 from discord.ext.commands import Context, CommandNotFound
 from tinydb import TinyDB, where
@@ -161,6 +161,11 @@ class ChannelBot:
             await message.author.send("Error: !dccreate cannot be used in a private message")
             return
 
+        author: Member = message.author
+        if not author.guild_permissions.manage_channels:
+            await message.author.send("Error: You do not have permissions to manage channels")
+            return
+
         overwrites = {
             guild.me: PermissionOverwrite(connect=True, manage_channels=True, move_members=True, view_channel=True)
         }
@@ -183,8 +188,12 @@ class ChannelBot:
             await message.author.send("Error: !dctemplate cannot be used in a private message")
             return
 
-        member: Member = message.author
-        channel = member.voice.channel
+        author: Member = message.author
+        channel = author.voice.channel
+
+        if Permissions.manage_channels not in author.guild_permissions:
+            await message.author.send("Error: You do not have permissions to manage channels")
+            return
 
         if not channel:
             await message.channel.send("Error: !dctemplate can only be used when connected to a voice channel")
