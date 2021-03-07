@@ -92,10 +92,12 @@ class DB:
         return structure(el, ManagedChannel)
 
     def get_children(self, spawner: ManagedChannel) -> List[ManagedChannel]:
-        raw_children = self._db.search(
-            (where("guild_id") == spawner.guild_id) & (where("config")["spawner"][1] == spawner.channel_id)
+        all_raw_channels = self._db.search(
+            where("guild_id") == spawner.guild_id
         )
-        return sorted([structure(el, ManagedChannel) for el in raw_children], key=lambda el: el.config.channel_number)
+        all_channels = (structure(el, ManagedChannel) for el in all_raw_channels)
+        children = (c for c in all_channels if c.config.spawner and c.config.spawner[1] == spawner.channel_id)
+        return sorted(children, key=lambda el: el.config.channel_number)
 
 
 class ChannelBot:
