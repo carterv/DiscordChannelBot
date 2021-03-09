@@ -5,7 +5,7 @@ import os
 from collections import Counter
 from enum import Enum
 from string import Template
-from typing import Optional, Tuple, Iterator, Iterable
+from typing import Optional, Tuple, Iterator, Sequence
 
 from attr import attrs, attrib
 from cattr import unstructure, structure
@@ -74,7 +74,7 @@ class ManagedChannel:
             channel_name = self.config.template
 
         new_channel: VoiceChannel = await source_channel.clone(name=channel_name)
-        await new_channel.edit(position=source_channel.position+1)
+        await new_channel.edit(position=source_channel.position + 1)
         managed_channel = ManagedChannel(guild.id, new_channel.id, new_config)
         db.insert_channel(managed_channel)
         await member.move_to(new_channel)
@@ -239,17 +239,20 @@ class ChannelBot:
         self.db.insert_channel(spawner)
         await message.channel.send("Template updated")
 
-    def game_status_from_members(self, members: Iterable[Member]) -> str:
+    def game_status_from_members(self, members: Sequence[Member]) -> str:
         c = Counter()
         for member in members:
             for activity in member.activities:
                 if isinstance(activity, Game):
                     c[activity.name] += 1
+                    break
+            else:
+                c["General"] += 1
         most_common = c.most_common(1)
         if most_common:
-            return most_common[0][0]
-        else:
-            return "General"
+            name, count = most_common[0]
+            return name
+        return "General"
 
     async def update_loop(self):
         while not self.bot.is_ready():
