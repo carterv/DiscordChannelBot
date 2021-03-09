@@ -73,12 +73,8 @@ class ManagedChannel:
         except (ValueError, KeyError):
             channel_name = self.config.template
 
-        new_channel = await guild.create_voice_channel(
-            channel_name,
-            overwrites=source_channel.overwrites,
-            category=source_channel.category,
-            position=source_channel.position,
-        )
+        new_channel: VoiceChannel = await source_channel.clone(name=channel_name)
+        await new_channel.edit(position=source_channel.position+1)
         managed_channel = ManagedChannel(guild.id, new_channel.id, new_config)
         db.insert_channel(managed_channel)
         await member.move_to(new_channel)
