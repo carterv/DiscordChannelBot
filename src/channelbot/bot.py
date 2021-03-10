@@ -9,7 +9,8 @@ from typing import Optional, Tuple, Iterator, Sequence
 
 from attr import attrs, attrib
 from cattr import unstructure, structure
-from discord import Message, Member, VoiceState, VoiceChannel, Guild, PermissionOverwrite, Game, Intents, NotFound
+from discord import Message, Member, VoiceState, VoiceChannel, Guild, PermissionOverwrite, Game, Intents, NotFound, \
+    ActivityType
 from discord.ext import commands
 from discord.ext.commands import Context, CommandNotFound
 from tinydb import TinyDB, where
@@ -243,13 +244,11 @@ class ChannelBot:
         c = Counter()
         for member in members:
             for activity in member.activities:
-                print(activity)
-                if isinstance(activity, Game):
+                if activity.type == ActivityType.playing or activity.type == ActivityType.streaming:
                     c[activity.name] += 1
                     break
             else:
                 c["General"] += 1
-        print(c)
         most_common = c.most_common(1)
         if most_common:
             name, count = most_common[0]
