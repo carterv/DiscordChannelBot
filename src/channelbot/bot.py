@@ -248,6 +248,7 @@ class ChannelBot:
                     break
             else:
                 c["General"] += 1
+        print(c)
         most_common = c.most_common(1)
         if most_common:
             name, count = most_common[0]
