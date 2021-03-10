@@ -243,6 +243,7 @@ class ChannelBot:
         c = Counter()
         for member in members:
             for activity in member.activities:
+                print(activity)
                 if isinstance(activity, Game):
                     c[activity.name] += 1
                     break
