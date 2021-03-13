@@ -4,12 +4,10 @@ import asyncio
 import os
 from collections import Counter
 from datetime import timedelta
-from enum import Enum
 from functools import wraps
 from string import Template
-from typing import Optional, Tuple, Iterator, Sequence
+from typing import Sequence
 
-from attr import attrs, attrib
 from cattr import unstructure, structure
 from discord import (
     Message,
@@ -25,107 +23,44 @@ from discord import (
 )
 from discord.ext import commands
 from discord.ext.commands import Context, CommandNotFound
-from tinydb import TinyDB, where
+
+from channelbot.data import ManagedChannelType, ChannelConfig, ManagedChannel
+from channelbot.db import ChannelDatabase
 
 
-class ManagedChannelType(Enum):
-    SPAWNER = "SPAWNER"
-    CHILD = "CHILD"
+def apply_template():
+    pass
 
 
-@attrs
-class ChannelConfig:
-    template = attrib(default="#${no} Talk [${game}]", type=str)
-    channel_type = attrib(default=ManagedChannelType.SPAWNER, type=ManagedChannelType)
-    # Child only attributes
-    spawner = attrib(type=Optional[Tuple[int, int]], default=None)
-    channel_number = attrib(type=Optional[int], default=None)
+async def spawn_channel(spawner: ManagedChannel, guild: Guild, member: Member, db: ChannelDatabase) -> ManagedChannel:
+    source_channel = spawner.voice_channel(guild)
 
+    channel_numbers = [el.config.channel_number for el in db.get_children(spawner)]
+    channel_number = len(channel_numbers) + 1
+    for i in range(1, channel_number):
+        if i not in channel_numbers:
+            channel_number = i
+            break
 
-@attrs
-class ManagedChannel:
-    guild_id = attrib(type=int)
-    channel_id = attrib(type=int)
-    config = attrib(type=ChannelConfig)
+    new_config = structure(unstructure(spawner.config), ChannelConfig)
+    new_config.channel_type = ManagedChannelType.CHILD
+    new_config.spawner = (spawner.guild_id, spawner.channel_id)
+    new_config.channel_number = channel_number
 
-    def voice_channel(self, guild: Guild) -> VoiceChannel:
-        return guild.get_channel(self.channel_id)
+    game_status = "General"
+    for activity in member.activities:
+        if not all((activity, isinstance(activity, Game))):
+            continue
+        game: Game = activity
+        game_status = game.name
 
-    def get_spawner(self, db: ChannelDatabase):
-        if self.config.channel_type == ManagedChannelType.SPAWNER:
-            return self
-        return db.get_channel(*self.config.spawner)
-
-    async def spawn_channel(self, guild: Guild, member: Member, db: ChannelDatabase) -> ManagedChannel:
-        source_channel = self.voice_channel(guild)
-
-        channel_numbers = [el.config.channel_number for el in db.get_children(self)]
-        channel_number = len(channel_numbers) + 1
-        for i in range(1, channel_number):
-            if i not in channel_numbers:
-                channel_number = i
-                break
-
-        new_config = structure(unstructure(self.config), ChannelConfig)
-        new_config.channel_type = ManagedChannelType.CHILD
-        new_config.spawner = (self.guild_id, self.channel_id)
-        new_config.channel_number = channel_number
-
-        game_status = "General"
-        for activity in member.activities:
-            if not all((activity, isinstance(activity, Game))):
-                continue
-            game: Game = activity
-            game_status = game.name
-
-        try:
-            channel_name = Template(self.config.template).substitute(
-                no=channel_number,
-                game=game_status,
-            )
-        except (ValueError, KeyError):
-            channel_name = self.config.template
-
-        new_channel: VoiceChannel = await source_channel.clone(name=channel_name)
-        await new_channel.edit(position=source_channel.position + 1)
-        managed_channel = ManagedChannel(guild.id, new_channel.id, new_config)
-        db.insert_channel(managed_channel)
-        await member.move_to(new_channel)
-        return managed_channel
-
-
-class ChannelDatabase:
-    def __init__(self):
-        self._db: TinyDB = TinyDB(os.getenv("CHANNEL_DB_PATH"))
-
-    def insert_channel(self, channel: ManagedChannel):
-        try:
-            self.remove_channel(channel)
-        except KeyError:
-            pass
-        self._db.insert(unstructure(channel))
-
-    def remove_channel(self, channel: ManagedChannel):
-        el = self._db.get((where("channel_id") == channel.channel_id) & (where("guild_id") == channel.guild_id))
-        if el:
-            self._db.remove(doc_ids=[el.doc_id])
-        else:
-            raise KeyError(channel.guild_id, channel.channel_id)
-
-    def get_channel(self, guild_id: int, channel_id: int) -> ManagedChannel:
-        el = self._db.get((where("channel_id") == channel_id) & (where("guild_id") == guild_id))
-        if not el:
-            raise KeyError(guild_id, channel_id)
-        return structure(el, ManagedChannel)
-
-    def get_children(self, spawner: ManagedChannel) -> Iterator[ManagedChannel]:
-        all_raw_channels = self._db.search(where("guild_id") == spawner.guild_id)
-        all_channels = (structure(el, ManagedChannel) for el in all_raw_channels)
-        children = (c for c in all_channels if c.config.spawner and c.config.spawner[1] == spawner.channel_id)
-        yield from sorted(children, key=lambda el: el.config.channel_number)
-
-    def scan(self) -> Iterator[ManagedChannel]:
-        yield from (structure(el, ManagedChannel) for el in self._db.search(where("channel_id") > 0))
+    channel_name = spawner.make_channel_name(game=game_status)
+    new_channel: VoiceChannel = await source_channel.clone(name=channel_name)
+    await new_channel.edit(position=source_channel.position + 1)
+    managed_channel = ManagedChannel(guild.id, new_channel.id, new_config)
+    db.insert_channel(managed_channel)
+    await member.move_to(new_channel)
+    return managed_channel
 
 
 def async_loop(*, hours: int = 0, minutes: int = 0, seconds: int = 0):
@@ -185,9 +120,7 @@ def game_status_from_members(members: Sequence[Member]) -> str:
 async def update_child_channel(guild: Guild, child_channel: ManagedChannel):
     voice_channel = child_channel.voice_channel(guild)
     game_status = game_status_from_members(voice_channel.members)
-    new_channel_name = Template(child_channel.config.template).substitute(
-        no=child_channel.config.channel_number, game=game_status
-    )
+    new_channel_name = child_channel.make_channel_name(game=game_status)
     if voice_channel.name != new_channel_name:
         await voice_channel.edit(name=new_channel_name)
 
@@ -233,7 +166,7 @@ class ChannelBot:
             return
 
         if channel.config.channel_type == ManagedChannelType.SPAWNER:
-            await channel.spawn_channel(guild, member, self.db)
+            await spawn_channel(channel, guild, member, self.db)
 
     async def on_channel_leave(self, member: Member, channel: VoiceChannel):
         guild: Guild = member.guild
