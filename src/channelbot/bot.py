@@ -323,11 +323,11 @@ class ChannelBot:
         except ValueError:
             limit = args[0]
 
-        if not isinstance(limit, int) or limit <= 0:
-            await message.channel.send("Limit must be positive, non-zero integer")
+        if not isinstance(limit, int) or limit < 0:
+            await message.channel.send("Limit must be positive integer")
             return
 
-        await channel.edit(limit=limit)
+        await channel.edit(user_limit=limit)
 
     @async_loop(minutes=1)
     async def update_loop(self):
