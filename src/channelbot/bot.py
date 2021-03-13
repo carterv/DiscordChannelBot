@@ -148,6 +148,24 @@ def async_loop(*, hours: int = 0, minutes: int = 0, seconds: int = 0):
     return wrapper
 
 
+def channel_only_command(command_prefix: str):
+    def wrapper(func):
+        @wraps(func)
+        async def wrapped(self, ctx, *args, **kwargs):
+            message: Message = ctx.message
+            guild: Guild = ctx.guild
+            try:
+                _ = guild.id
+            except AttributeError:
+                await message.author.send(f"Error: !{command_prefix} cannot be used in a private message")
+                return
+            await func(self, ctx, *args, **kwargs)
+
+        return wrapped
+
+    return wrapper
+
+
 def game_status_from_members(members: Sequence[Member]) -> str:
     c = Counter()
     for member in members:
@@ -162,6 +180,16 @@ def game_status_from_members(members: Sequence[Member]) -> str:
         name, count = most_common[0]
         return name
     return "General"
+
+
+async def update_child_channel(guild: Guild, child_channel: ManagedChannel):
+    voice_channel = child_channel.voice_channel(guild)
+    game_status = game_status_from_members(voice_channel.members)
+    new_channel_name = Template(child_channel.config.template).substitute(
+        no=child_channel.config.channel_number, game=game_status
+    )
+    if voice_channel.name != new_channel_name:
+        await voice_channel.edit(name=new_channel_name)
 
 
 class ChannelBot:
@@ -197,46 +225,52 @@ class ChannelBot:
             return
         raise error
 
-    async def on_voice_state_update(self, member: Member, before: VoiceState, after: VoiceState):
+    async def on_channel_join(self, member: Member, channel: VoiceChannel):
         guild: Guild = member.guild
+        try:
+            channel: ManagedChannel = self.db.get_channel(member.guild.id, channel.id)
+        except KeyError:
+            return
+
+        if channel.config.channel_type == ManagedChannelType.SPAWNER:
+            await channel.spawn_channel(guild, member, self.db)
+
+    async def on_channel_leave(self, member: Member, channel: VoiceChannel):
+        guild: Guild = member.guild
+        try:
+            managed_channel = self.db.get_channel(guild.id, channel.id)
+        except KeyError:
+            return
+
+        if managed_channel.config.channel_type != ManagedChannelType.CHILD:
+            return
+
+        if channel.members:
+            await update_child_channel(guild, managed_channel)
+            return
+
+        try:
+            await channel.delete()
+        except NotFound:
+            pass
+        self.db.remove_channel(managed_channel)
+
+    async def on_voice_state_update(self, member: Member, before: VoiceState, after: VoiceState):
         if before.channel == after.channel:
             return
 
         if before.channel is not None:
-            channel: VoiceChannel = before.channel
-            if not channel.members:
-                try:
-                    managed_channel = self.db.get_channel(guild.id, channel.id)
-                except KeyError:
-                    pass
-                else:
-                    if managed_channel.config.channel_type == ManagedChannelType.CHILD:
-                        try:
-                            await channel.delete()
-                        except NotFound:
-                            pass
-                        self.db.remove_channel(managed_channel)
+            await self.on_channel_leave(member, before.channel)
 
         if after.channel is not None:
-            try:
-                channel: ManagedChannel = self.db.get_channel(member.guild.id, after.channel.id)
-            except KeyError:
-                pass
-            else:
-                if channel.config.channel_type == ManagedChannelType.SPAWNER:
-                    await channel.spawn_channel(guild, member, self.db)
+            await self.on_channel_join(member, after.channel)
 
+    @channel_only_command("cbspawner")
     async def create_spawner(self, ctx: Context):
         message: Message = ctx.message
         guild: Guild = ctx.guild
-
-        try:
-            _ = message.guild.id
-        except AttributeError:
-            await message.author.send("Error: !cbspawner cannot be used in a private message")
-            return
-
         author: Member = message.author
+
         if not author.guild_permissions.manage_channels:
             await message.channel.send("Error: You do not have permissions to manage channels")
             return
@@ -253,16 +287,10 @@ class ChannelBot:
 
         await message.channel.send(f"New channel spawner created")
 
+    @channel_only_command("cbtemplate")
     async def update_template(self, ctx: Context, *args: str):
         message: Message = ctx.message
         guild: Guild = ctx.guild
-
-        try:
-            _ = guild.id
-        except AttributeError:
-            await message.author.send("Error: !cbtemplate cannot be used in a private message")
-            return
-
         author: Member = message.author
         channel = author.voice.channel
 
@@ -291,16 +319,10 @@ class ChannelBot:
         self.db.insert_channel(spawner)
         await message.channel.send("Template updated")
 
+    @channel_only_command("cblimit")
     async def limit_channel(self, ctx: Context, *args: str):
         message: Message = ctx.message
         guild: Guild = ctx.guild
-
-        try:
-            _ = guild.id
-        except AttributeError:
-            await message.author.send("Error: !cblimit cannot be used in a private message")
-            return
-
         author: Member = message.author
         channel: VoiceChannel = author.voice.channel
 
@@ -353,10 +375,5 @@ class ChannelBot:
                 continue
 
             if channel.config.channel_type == ManagedChannelType.CHILD:
-                game_status = game_status_from_members(voice_channel.members)
-                await voice_channel.edit(
-                    name=Template(channel.config.template).substitute(
-                        no=channel.config.channel_number, game=game_status
-                    )
-                )
+                await update_child_channel(guild, channel)
                 continue
