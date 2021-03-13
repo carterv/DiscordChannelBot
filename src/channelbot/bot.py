@@ -54,7 +54,7 @@ async def spawn_channel(spawner: ManagedChannel, guild: Guild, member: Member, d
         game: Game = activity
         game_status = game.name
 
-    channel_name = spawner.make_channel_name(game=game_status)
+    channel_name = new_config.make_channel_name(game=game_status)
     new_channel: VoiceChannel = await source_channel.clone(name=channel_name)
     await new_channel.edit(position=source_channel.position + 1)
     managed_channel = ManagedChannel(guild.id, new_channel.id, new_config)
@@ -120,7 +120,7 @@ def game_status_from_members(members: Sequence[Member]) -> str:
 async def update_child_channel(guild: Guild, child_channel: ManagedChannel):
     voice_channel = child_channel.voice_channel(guild)
     game_status = game_status_from_members(voice_channel.members)
-    new_channel_name = child_channel.make_channel_name(game=game_status)
+    new_channel_name = child_channel.config.make_channel_name(game=game_status)
     if voice_channel.name != new_channel_name:
         await voice_channel.edit(name=new_channel_name)
 

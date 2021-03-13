@@ -24,6 +24,12 @@ class ChannelConfig:
     spawner = attrib(type=Optional[Tuple[int, int]], default=None)
     channel_number = attrib(type=Optional[int], default=None)
 
+    def make_channel_name(self, *, game: str = "General"):
+        try:
+            return Template(self.template).substitute(no=self.channel_number, game=game)
+        except (ValueError, KeyError):
+            return self.template
+
 
 @attrs
 class ManagedChannel:
@@ -38,9 +44,3 @@ class ManagedChannel:
         if self.config.channel_type == ManagedChannelType.SPAWNER:
             return self
         return db.get_channel(*self.config.spawner)
-
-    def make_channel_name(self, *, game: str = "General"):
-        try:
-            return Template(self.config.template).substitute(no=self.config.channel_number, game=game)
-        except (ValueError, KeyError):
-            return self.config.template
