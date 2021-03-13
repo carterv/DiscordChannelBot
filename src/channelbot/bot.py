@@ -183,9 +183,9 @@ class ChannelBot:
                 "Currently supported variables are '${no}' (number) and '${game}'. "
             ),
         )(self.update_template)
-        self.bot.command(name="cblimit", help=(
-            "Set the user limit for your current channel. Set to zero to remove the limit."
-        ))(self.limit_channel)
+        self.bot.command(
+            name="cblimit", help=("Set the user limit for your current channel. Set to zero to remove the limit.")
+        )(self.limit_channel)
         self.bot.loop.create_task(self.update_loop())
 
     def run(self):
@@ -318,7 +318,11 @@ class ChannelBot:
             await message.channel.send("Usage: !cblimit <limit>")
             return
 
-        limit = args[0]
+        try:
+            limit = int(args[0])
+        except ValueError:
+            limit = args[0]
+
         if not isinstance(limit, int) or limit <= 0:
             await message.channel.send("Limit must be positive, non-zero integer")
             return
