@@ -3,14 +3,26 @@ from __future__ import annotations
 import asyncio
 import os
 from collections import Counter
+from datetime import timedelta
 from enum import Enum
+from functools import wraps
 from string import Template
 from typing import Optional, Tuple, Iterator, Sequence
 
 from attr import attrs, attrib
 from cattr import unstructure, structure
-from discord import Message, Member, VoiceState, VoiceChannel, Guild, PermissionOverwrite, Game, Intents, NotFound, \
-    ActivityType
+from discord import (
+    Message,
+    Member,
+    VoiceState,
+    VoiceChannel,
+    Guild,
+    PermissionOverwrite,
+    Game,
+    Intents,
+    NotFound,
+    ActivityType,
+)
 from discord.ext import commands
 from discord.ext.commands import Context, CommandNotFound
 from tinydb import TinyDB, where
@@ -114,6 +126,26 @@ class ChannelDatabase:
 
     def scan(self) -> Iterator[ManagedChannel]:
         yield from (structure(el, ManagedChannel) for el in self._db.search(where("channel_id") > 0))
+
+
+def async_loop(*, hours: int = 0, minutes: int = 0, seconds: int = 0):
+    seconds = timedelta(hours=hours, minutes=minutes, seconds=seconds).seconds
+    if seconds <= 0:
+        raise ValueError("Loop time must be greater than zero")
+
+    def wrapper(func):
+        @wraps(func)
+        async def wrapped(self, *args, **kwargs):
+            while not self.bot.is_ready():
+                await asyncio.sleep(1)
+
+            while not self.bot.is_closed():
+                await func(self, *args, **kwargs)
+                await asyncio.sleep(seconds)
+
+        return wrapped
+
+    return wrapper
 
 
 class ChannelBot:
@@ -255,39 +287,35 @@ class ChannelBot:
             return name
         return "General"
 
+    @async_loop(minutes=1)
     async def update_loop(self):
-        while not self.bot.is_ready():
-            await asyncio.sleep(1)
+        all_managed_channels = list(self.db.scan())
+        for channel in all_managed_channels:
+            print(f"{channel}")
+            guild = self.bot.get_guild(channel.guild_id)
+            if guild is None:
+                print("Removing invalid channel (no guild)")
+                self.db.remove_channel(channel)
+                continue
+            voice_channel = channel.voice_channel(guild)
+            if voice_channel is None:
+                print("Removing invalid channel (no channel)")
+                self.db.remove_channel(channel)
+                continue
 
-        while not self.bot.is_closed():
-            all_managed_channels = list(self.db.scan())
-            for channel in all_managed_channels:
-                guild = self.bot.get_guild(channel.guild_id)
-                if guild is None:
-                    print("Removing invalid channel (no guild)")
-                    self.db.remove_channel(channel)
-                    continue
-                voice_channel = channel.voice_channel(guild)
-                if voice_channel is None:
-                    print("Removing invalid channel (no channel)")
-                    self.db.remove_channel(channel)
-                    continue
+            if channel.config.channel_type == ManagedChannelType.CHILD and len(voice_channel.members) == 0:
+                try:
+                    await voice_channel.delete(reason="Automated channel cleanup")
+                except NotFound:
+                    pass
+                self.db.remove_channel(channel)
+                continue
 
-                if channel.config.channel_type == ManagedChannelType.CHILD and len(voice_channel.members) == 0:
-                    try:
-                        await voice_channel.delete(reason="Automated channel cleanup")
-                    except NotFound:
-                        pass
-                    self.db.remove_channel(channel)
-                    continue
-
-                if channel.config.channel_type == ManagedChannelType.CHILD:
-                    game_status = self.game_status_from_members(voice_channel.members)
-                    await voice_channel.edit(
-                        name=Template(channel.config.template).substitute(
-                            no=channel.config.channel_number, game=game_status
-                        )
+            if channel.config.channel_type == ManagedChannelType.CHILD:
+                game_status = self.game_status_from_members(voice_channel.members)
+                await voice_channel.edit(
+                    name=Template(channel.config.template).substitute(
+                        no=channel.config.channel_number, game=game_status
                     )
-                    continue
-
-            await asyncio.sleep(60)
+                )
+                continue
