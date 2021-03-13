@@ -148,6 +148,22 @@ def async_loop(*, hours: int = 0, minutes: int = 0, seconds: int = 0):
     return wrapper
 
 
+def game_status_from_members(members: Sequence[Member]) -> str:
+    c = Counter()
+    for member in members:
+        for activity in member.activities:
+            if activity.type == ActivityType.playing or activity.type == ActivityType.streaming:
+                c[activity.name] += 1
+                break
+        else:
+            c["General"] += 1
+    most_common = c.most_common(1)
+    if most_common:
+        name, count = most_common[0]
+        return name
+    return "General"
+
+
 class ChannelBot:
     def __init__(self):
         self.db: ChannelDatabase = ChannelDatabase()
@@ -159,14 +175,17 @@ class ChannelBot:
 
         self.bot.event(self.on_voice_state_update)
         self.bot.event(self.on_command_error)
-        self.bot.command(name="dcspawn", help="Create a new dynamic channel")(self.create_spawner)
+        self.bot.command(name="cbspawner", help="Create a new dynamic channel")(self.create_spawner)
         self.bot.command(
-            name="dctemplate",
+            name="cbtemplate",
             help=(
                 "Update the template for the connected channel. "
                 "Currently supported variables are '${no}' (number) and '${game}'. "
             ),
         )(self.update_template)
+        self.bot.command(name="cblimit", help=(
+            "Set the user limit for your current channel. Set to zero to remove the limit."
+        ))(self.limit_channel)
         self.bot.loop.create_task(self.update_loop())
 
     def run(self):
@@ -214,7 +233,7 @@ class ChannelBot:
         try:
             _ = message.guild.id
         except AttributeError:
-            await message.author.send("Error: !dccreate cannot be used in a private message")
+            await message.author.send("Error: !cbspawner cannot be used in a private message")
             return
 
         author: Member = message.author
@@ -241,7 +260,7 @@ class ChannelBot:
         try:
             _ = guild.id
         except AttributeError:
-            await message.author.send("Error: !dctemplate cannot be used in a private message")
+            await message.author.send("Error: !cbtemplate cannot be used in a private message")
             return
 
         author: Member = message.author
@@ -252,7 +271,7 @@ class ChannelBot:
             return
 
         if not channel:
-            await message.channel.send("Error: !dctemplate can only be used when connected to a voice channel")
+            await message.channel.send("Error: !cbtemplate can only be used when connected to a voice channel")
             return
 
         try:
@@ -272,26 +291,44 @@ class ChannelBot:
         self.db.insert_channel(spawner)
         await message.channel.send("Template updated")
 
-    def game_status_from_members(self, members: Sequence[Member]) -> str:
-        c = Counter()
-        for member in members:
-            for activity in member.activities:
-                if activity.type == ActivityType.playing or activity.type == ActivityType.streaming:
-                    c[activity.name] += 1
-                    break
-            else:
-                c["General"] += 1
-        most_common = c.most_common(1)
-        if most_common:
-            name, count = most_common[0]
-            return name
-        return "General"
+    async def limit_channel(self, ctx: Context, *args: str):
+        message: Message = ctx.message
+        guild: Guild = ctx.guild
+
+        try:
+            _ = guild.id
+        except AttributeError:
+            await message.author.send("Error: !cblimit cannot be used in a private message")
+            return
+
+        author: Member = message.author
+        channel: VoiceChannel = author.voice.channel
+
+        try:
+            managed_channel = self.db.get_channel(guild.id, channel.id)
+        except KeyError:
+            await message.channel.send("Error: You must be in a ChannelBot-managed session to set limit")
+            return
+
+        if not managed_channel.config.channel_type == ManagedChannelType.CHILD:
+            await message.channel.send("Error: Command not allowed in non-child channels")
+            return
+
+        if len(args) != 1:
+            await message.channel.send("Usage: !cblimit <limit>")
+            return
+
+        limit = args[0]
+        if not isinstance(limit, int) or limit <= 0:
+            await message.channel.send("Limit must be positive, non-zero integer")
+            return
+
+        await channel.edit(limit=limit)
 
     @async_loop(minutes=1)
     async def update_loop(self):
         all_managed_channels = list(self.db.scan())
         for channel in all_managed_channels:
-            print(f"{channel}")
             guild = self.bot.get_guild(channel.guild_id)
             if guild is None:
                 print("Removing invalid channel (no guild)")
@@ -312,7 +349,7 @@ class ChannelBot:
                 continue
 
             if channel.config.channel_type == ManagedChannelType.CHILD:
-                game_status = self.game_status_from_members(voice_channel.members)
+                game_status = game_status_from_members(voice_channel.members)
                 await voice_channel.edit(
                     name=Template(channel.config.template).substitute(
                         no=channel.config.channel_number, game=game_status
