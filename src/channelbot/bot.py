@@ -137,6 +137,7 @@ class ChannelBot:
         self.bot.event(self.on_voice_state_update)
         self.bot.event(self.on_command_error)
         self.bot.command(name="cbspawner", help="Create a new dynamic channel")(self.create_spawner)
+        self.bot.command(name="cbrename", help="Rename your current channel")(self.rename)
         self.bot.command(
             name="cbtemplate",
             help=(
@@ -251,6 +252,38 @@ class ChannelBot:
 
         self.db.insert_channel(spawner)
         await message.channel.send("Template updated")
+
+    @channel_only_command("cbrename")
+    async def rename(self, ctx: Context, *args: str):
+        message: Message = ctx.message
+        guild: Guild = ctx.guild
+        author: Member = message.author
+        channel = author.voice.channel
+
+        if not channel:
+            await message.channel.send("Error: !cbrename can only be used when connected to a voice channel")
+            return
+
+        try:
+            managed_channel = self.db.get_channel(guild.id, channel.id)
+        except KeyError:
+            await message.channel.send("Error: Channel is not managed by ChannelBot")
+            return
+
+        if managed_channel.config.channel_type != ManagedChannelType.CHILD:
+            await message.channel.send("Error: Channel must be a child channel")
+            return
+
+        managed_channel.config.template = " ".join(args)
+        try:
+            Template(managed_channel.config.template).substitute(no=1, game="General")
+        except (KeyError, ValueError):
+            await message.channel.send("Error: Invalid template provided")
+            return
+
+        self.db.insert_channel(managed_channel)
+        await message.channel.send("Template updated")
+        await update_child_channel(guild, managed_channel)
 
     @channel_only_command("cblimit")
     async def limit_channel(self, ctx: Context, *args: str):
