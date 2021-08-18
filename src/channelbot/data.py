@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from string import Template
 from typing import Optional, Tuple, TYPE_CHECKING
@@ -23,12 +24,17 @@ class ChannelConfig:
     # Child only attributes
     spawner = attrib(type=Optional[Tuple[int, int]], default=None)
     channel_number = attrib(type=Optional[int], default=None)
+    hold_until = attrib(type=Optional[float], default=None)
 
     def make_channel_name(self, *, game: str = "General"):
         try:
             return Template(self.template).substitute(no=self.channel_number, game=game)
         except (ValueError, KeyError):
             return self.template
+
+    @property
+    def is_expired(self) -> bool:
+        return self.hold_until is None or datetime.utcnow().timestamp() >= self.hold_until
 
 
 @attrs

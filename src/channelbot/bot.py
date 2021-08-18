@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections import Counter
-from datetime import timedelta
+from datetime import timedelta, datetime
 from functools import wraps
 from string import Template
 from typing import Sequence
@@ -146,8 +146,11 @@ class ChannelBot:
             ),
         )(self.update_template)
         self.bot.command(
-            name="cblimit", help=("Set the user limit for your current channel. Set to zero to remove the limit.")
+            name="cblimit", help="Set the user limit for your current channel. Set to zero to remove the limit."
         )(self.limit_channel)
+        self.bot.command(name="cbhold", help="Configure the current channel to stay alive even if it has no members")(
+            self.hold_channel
+        )
         self.bot.loop.create_task(self.update_loop())
 
     def run(self):
@@ -181,6 +184,9 @@ class ChannelBot:
 
         if channel.members:
             await update_child_channel(guild, managed_channel)
+            return
+
+        if not managed_channel.config.is_expired:
             return
 
         try:
@@ -317,6 +323,50 @@ class ChannelBot:
 
         await channel.edit(user_limit=limit)
 
+    @channel_only_command("cbhold")
+    async def hold_channel(self, ctx: Context, *args: str):
+        message: Message = ctx.message
+        guild: Guild = ctx.guild
+        author: Member = message.author
+        channel: VoiceChannel = author.voice.channel
+
+        try:
+            managed_channel = self.db.get_channel(guild.id, channel.id)
+        except KeyError:
+            await message.channel.send("Error: You must be in a ChannelBot-managed session to set limit")
+            return
+
+        if not managed_channel.config.channel_type == ManagedChannelType.CHILD:
+            await message.channel.send("Error: Command not allowed in non-child channels")
+            return
+
+        if len(args) != 1:
+            await message.channel.send("Usage: !cbhold <DD:HH:MM>")
+            return
+
+        try:
+            days, hours, minutes = [int(p) for p in args[0].split(":")]
+        except ValueError:
+            await message.channel.send("Usage: !cbhold <DD:HH:MM>")
+            return
+
+        if managed_channel.config.hold_until is None:
+            managed_channel.config.hold_until = (
+                datetime.utcnow() + timedelta(days=days, hours=hours, minutes=minutes)
+            ).timestamp()
+        else:
+            managed_channel.config.hold_until = (
+                datetime.utcfromtimestamp(managed_channel.config.hold_until)
+                + timedelta(days=days, hours=hours, minutes=minutes)
+            ).timestamp()
+
+        self.db.insert_channel(managed_channel)
+        await message.channel.send(
+            "Hold will expire at {}".format(
+                datetime.utcfromtimestamp(managed_channel.config.hold_until).strftime("%Y-%m-%dT%H:%M:%S")
+            )
+        )
+
     @async_loop(minutes=1)
     async def update_loop(self):
         all_managed_channels = list(self.db.scan())
@@ -332,7 +382,11 @@ class ChannelBot:
                 self.db.remove_channel(channel)
                 continue
 
-            if channel.config.channel_type == ManagedChannelType.CHILD and len(voice_channel.members) == 0:
+            if (
+                channel.config.channel_type == ManagedChannelType.CHILD
+                and len(voice_channel.members) == 0
+                and channel.config.is_expired
+            ):
                 try:
                     await voice_channel.delete(reason="Automated channel cleanup")
                 except NotFound:
