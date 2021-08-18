@@ -362,7 +362,7 @@ class ChannelBot:
 
         self.db.insert_channel(managed_channel)
         await message.channel.send(
-            "Hold will expire at {}".format(
+            "Hold will expire at {} UTC".format(
                 datetime.utcfromtimestamp(managed_channel.config.hold_until).strftime("%Y-%m-%dT%H:%M:%S")
             )
         )
