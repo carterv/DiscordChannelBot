@@ -37,11 +37,11 @@ class ChannelConfig:
         return self.hold_until is None or datetime.utcnow().timestamp() >= self.hold_until
 
 
-@attrs
+@attrs(frozen=True)
 class ManagedChannel:
-    guild_id = attrib(type=int)
-    channel_id = attrib(type=int)
-    config = attrib(type=ChannelConfig)
+    guild_id = attrib(type=int, hash=True)
+    channel_id = attrib(type=int, hash=True)
+    config = attrib(type=ChannelConfig, hash=False)
 
     def voice_channel(self, guild: Guild) -> VoiceChannel:
         return guild.get_channel(self.channel_id)

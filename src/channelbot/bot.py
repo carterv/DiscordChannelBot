@@ -4,7 +4,7 @@ import asyncio
 import os
 from collections import Counter
 from datetime import timedelta, datetime
-from functools import wraps
+from functools import wraps, lru_cache
 from string import Template
 from typing import Sequence
 
@@ -126,6 +126,10 @@ async def update_child_channel(guild: Guild, child_channel: ManagedChannel):
         await voice_channel.edit(name=new_channel_name)
 
 
+@lru_cache(maxsize=64)
+def lock(guild_id: int, channel_id: int):
+    return asyncio.Lock()
+
 class ChannelBot:
     def __init__(self):
         self.db: ChannelDatabase = ChannelDatabase()
@@ -160,14 +164,7 @@ class ChannelBot:
         self.bot.run(token)
 
     async def on_ready(self):
-        await self.update_loop()
-        # Clean up any managed channels
-        all_managed_channels = list(self.db.scan())
-        for channel in all_managed_channels:
-            guild = self.bot.get_guild(channel.guild_id)
-            voice_channel = channel.voice_channel(guild)
-            if channel.config.channel_type == ManagedChannelType.SPAWNER and len(voice_channel.members) > 0:
-                await spawn_channel(channel, guild, self.db, *voice_channel.members)
+        await self.update_task()
 
     async def on_command_error(self, ctx: Context, error: BaseException):
         if isinstance(error, CommandNotFound):
@@ -175,14 +172,15 @@ class ChannelBot:
         raise error
 
     async def on_channel_join(self, member: Member, channel: VoiceChannel):
-        guild: Guild = member.guild
+        guild: Guild = channel.guild
         try:
-            channel: ManagedChannel = self.db.get_channel(member.guild.id, channel.id)
+            managed_channel: ManagedChannel = self.db.get_channel(guild.id, channel.id)
         except KeyError:
             return
 
-        if channel.config.channel_type == ManagedChannelType.SPAWNER:
-            await spawn_channel(channel, guild, self.db, member)
+        if managed_channel.config.channel_type == ManagedChannelType.SPAWNER:
+            async with lock(guild.id, channel.id):
+                await spawn_channel(managed_channel, guild, self.db, *channel.members)
 
     async def on_channel_leave(self, member: Member, channel: VoiceChannel):
         guild: Guild = member.guild
@@ -194,18 +192,19 @@ class ChannelBot:
         if managed_channel.config.channel_type != ManagedChannelType.CHILD:
             return
 
-        if channel.members:
-            await update_child_channel(guild, managed_channel)
-            return
+        async with lock(guild.id, channel.id):
+            if channel.members:
+                await update_child_channel(guild, managed_channel)
+                return
 
-        if not managed_channel.config.is_expired:
-            return
+            if not managed_channel.config.is_expired:
+                return
 
-        try:
-            await channel.delete()
-        except NotFound:
-            pass
-        self.db.remove_channel(managed_channel)
+            try:
+                await channel.delete()
+            except NotFound:
+                pass
+            self.db.remove_channel(managed_channel)
 
     async def on_voice_state_update(self, member: Member, before: VoiceState, after: VoiceState):
         if before.channel == after.channel:
@@ -381,35 +380,45 @@ class ChannelBot:
 
     @async_loop(minutes=1)
     async def update_loop(self):
+        await self.update_task()
+
+    async def update_task(self):
         all_managed_channels = list(self.db.scan())
         for channel in all_managed_channels:
             guild = self.bot.get_guild(channel.guild_id)
             if guild is None:
                 print("Removing invalid channel (no guild)")
-                self.db.remove_channel(channel)
+                try:
+                    self.db.remove_channel(channel)
+                except KeyError:
+                    pass
                 continue
             voice_channel = channel.voice_channel(guild)
             if voice_channel is None:
                 print("Removing invalid channel (no channel)")
-                self.db.remove_channel(channel)
-                continue
-
-            if (
-                channel.config.channel_type == ManagedChannelType.CHILD
-                and len(voice_channel.members) == 0
-                and channel.config.is_expired
-            ):
                 try:
-                    await voice_channel.delete(reason="Automated channel cleanup")
-                except NotFound:
+                    self.db.remove_channel(channel)
+                except KeyError:
                     pass
-                self.db.remove_channel(channel)
                 continue
 
-            if channel.config.channel_type == ManagedChannelType.CHILD:
-                await update_child_channel(guild, channel)
-                continue
+            async with lock(guild.id, voice_channel.id):
+                if (
+                    channel.config.channel_type == ManagedChannelType.CHILD
+                    and len(voice_channel.members) == 0
+                    and channel.config.is_expired
+                ):
+                    try:
+                        await voice_channel.delete(reason="Automated channel cleanup")
+                    except NotFound:
+                        pass
+                    self.db.remove_channel(channel)
+                    continue
 
-            if channel.config.channel_type == ManagedChannelType.SPAWNER and len(voice_channel.members) > 0:
-                await spawn_channel(channel, guild, self.db, *voice_channel.members)
-                continue
+                if channel.config.channel_type == ManagedChannelType.CHILD:
+                    await update_child_channel(guild, channel)
+                    continue
+
+                if channel.config.channel_type == ManagedChannelType.SPAWNER:
+                    if len(voice_channel.members) > 0:
+                        await spawn_channel(channel, guild, self.db, *voice_channel.members)
