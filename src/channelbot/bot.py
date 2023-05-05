@@ -166,7 +166,7 @@ class ChannelBot:
         for channel in all_managed_channels:
             guild = self.bot.get_guild(channel.guild_id)
             voice_channel = channel.voice_channel(guild)
-            if channel.config.channel_type == ManagedChannelType.SPAWNER and len(voice_channel.members) != 1:
+            if channel.config.channel_type == ManagedChannelType.SPAWNER and len(voice_channel.members) > 0:
                 await spawn_channel(channel, guild, self.db, *voice_channel.members)
 
     async def on_command_error(self, ctx: Context, error: BaseException):
@@ -408,4 +408,8 @@ class ChannelBot:
 
             if channel.config.channel_type == ManagedChannelType.CHILD:
                 await update_child_channel(guild, channel)
+                continue
+
+            if channel.config.channel_type == ManagedChannelType.SPAWNER and len(voice_channel.members) > 0:
+                await spawn_channel(channel, guild, self.db, *voice_channel.members)
                 continue
