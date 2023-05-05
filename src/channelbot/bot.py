@@ -32,7 +32,7 @@ def apply_template():
     pass
 
 
-async def spawn_channel(spawner: ManagedChannel, guild: Guild, member: Member, db: ChannelDatabase) -> ManagedChannel:
+async def spawn_channel(spawner: ManagedChannel, guild: Guild, db: ChannelDatabase, *members: Member) -> ManagedChannel:
     source_channel = spawner.voice_channel(guild)
 
     channel_numbers = [el.config.channel_number for el in db.get_children(spawner)]
@@ -48,7 +48,7 @@ async def spawn_channel(spawner: ManagedChannel, guild: Guild, member: Member, d
     new_config.channel_number = channel_number
 
     game_status = "General"
-    for activity in member.activities:
+    for activity in members[0].activities:  # FIXME: Use all members
         if not all((activity, isinstance(activity, Game))):
             continue
         game: Game = activity
@@ -59,7 +59,8 @@ async def spawn_channel(spawner: ManagedChannel, guild: Guild, member: Member, d
     await new_channel.edit(position=source_channel.position + 1)
     managed_channel = ManagedChannel(guild.id, new_channel.id, new_config)
     db.insert_channel(managed_channel)
-    await member.move_to(new_channel)
+    for member in members:
+        await member.move_to(new_channel)
     return managed_channel
 
 
@@ -136,6 +137,7 @@ class ChannelBot:
 
         self.bot.event(self.on_voice_state_update)
         self.bot.event(self.on_command_error)
+        self.bot.event(self.on_ready)
         self.bot.command(name="cbspawner", help="Create a new dynamic channel")(self.create_spawner)
         self.bot.command(name="cbrename", help="Rename your current channel")(self.rename)
         self.bot.command(
@@ -157,6 +159,16 @@ class ChannelBot:
         token = os.getenv("DISCORD_TOKEN")
         self.bot.run(token)
 
+    async def on_ready(self):
+        await self.update_loop()
+        # Clean up any managed channels
+        all_managed_channels = list(self.db.scan())
+        for channel in all_managed_channels:
+            guild = self.bot.get_guild(channel.guild_id)
+            voice_channel = channel.voice_channel(guild)
+            if channel.config.channel_type == ManagedChannelType.SPAWNER and len(voice_channel.members) != 1:
+                await spawn_channel(channel, guild, self.db, *voice_channel.members)
+
     async def on_command_error(self, ctx: Context, error: BaseException):
         if isinstance(error, CommandNotFound):
             return
@@ -170,7 +182,7 @@ class ChannelBot:
             return
 
         if channel.config.channel_type == ManagedChannelType.SPAWNER:
-            await spawn_channel(channel, guild, member, self.db)
+            await spawn_channel(channel, guild, self.db, member)
 
     async def on_channel_leave(self, member: Member, channel: VoiceChannel):
         guild: Guild = member.guild
