@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 class ManagedChannelType(Enum):
     SPAWNER = "SPAWNER"
     CHILD = "CHILD"
+    IMPORT = "IMPORT"
 
 
 @attrs
@@ -34,6 +35,8 @@ class ChannelConfig:
 
     @property
     def is_expired(self) -> bool:
+        if self.channel_type == ManagedChannelType.IMPORT:
+            return False
         return self.hold_until is None or datetime.utcnow().timestamp() >= self.hold_until
 
 

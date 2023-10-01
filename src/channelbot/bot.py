@@ -130,6 +130,7 @@ async def update_child_channel(guild: Guild, child_channel: ManagedChannel):
 def lock(guild_id: int, channel_id: int):
     return asyncio.Lock()
 
+
 class ChannelBot:
     def __init__(self):
         self.db: ChannelDatabase = ChannelDatabase()
@@ -157,6 +158,7 @@ class ChannelBot:
         self.bot.command(name="cbhold", help="Configure the current channel to stay alive even if it has no members")(
             self.hold_channel
         )
+        self.bot.command(name="cbimport", help="Import a channel")(self.import_channel)
         self.bot.loop.create_task(self.update_loop())
 
     def run(self):
@@ -287,8 +289,8 @@ class ChannelBot:
             await message.channel.send("Error: Channel is not managed by ChannelBot")
             return
 
-        if managed_channel.config.channel_type != ManagedChannelType.CHILD:
-            await message.channel.send("Error: Channel must be a child channel")
+        if managed_channel.config.channel_type not in {ManagedChannelType.CHILD, ManagedChannelType.IMPORT}:
+            await message.channel.send("Error: Channel must be a child or imported channel")
             return
 
         managed_channel.config.template = " ".join(args)
@@ -377,6 +379,27 @@ class ChannelBot:
                 datetime.utcfromtimestamp(managed_channel.config.hold_until).strftime("%Y-%m-%dT%H:%M:%S")
             )
         )
+
+    @channel_only_command("cbimport")
+    async def import_channel(self, ctx: Context, *args: str):
+        message: Message = ctx.message
+        guild: Guild = ctx.guild
+        author: Member = message.author
+        channel: VoiceChannel = author.voice.channel
+        try:
+            _ = self.db.get_channel(guild.id, channel.id)
+        except KeyError:
+            pass
+        else:
+            await message.channel.send("Error: The channel you are in is already ChannelBot-managed")
+
+        imported_channel = ManagedChannel(
+            guild_id=guild.id,
+            channel_id=channel.id,
+            config=ChannelConfig(channel_type=ManagedChannelType.IMPORT, template=channel.name, channel_number=0),
+        )
+        self.db.insert_channel(imported_channel)
+        await message.channel.send("Channel imported")
 
     @async_loop(minutes=1)
     async def update_loop(self):
