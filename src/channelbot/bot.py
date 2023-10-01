@@ -220,7 +220,7 @@ class ChannelBot:
             await self.on_channel_join(member, after.channel)
 
     @channel_only_command("cbspawner")
-    async def create_spawner(self, ctx: Context):
+    async def create_spawner(self, ctx: Context, *args: str):
         message: Message = ctx.message
         guild: Guild = ctx.guild
         author: Member = message.author

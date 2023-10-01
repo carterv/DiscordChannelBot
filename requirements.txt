@@ -1,6 +1,6 @@
 python-dotenv
 setuptools
 tinydb
-discord.py
+discord.py<2.0
 attrs
 cattrs
