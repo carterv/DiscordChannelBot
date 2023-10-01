@@ -118,10 +118,10 @@ def game_status_from_members(members: Sequence[Member]) -> str:
     return "General"
 
 
-async def update_child_channel(guild: Guild, child_channel: ManagedChannel):
-    voice_channel = child_channel.voice_channel(guild)
+async def update_channel_name(guild: Guild, channel: ManagedChannel):
+    voice_channel = channel.voice_channel(guild)
     game_status = game_status_from_members(voice_channel.members)
-    new_channel_name = child_channel.config.make_channel_name(game=game_status)
+    new_channel_name = channel.config.make_channel_name(game=game_status)
     if voice_channel.name != new_channel_name:
         await voice_channel.edit(name=new_channel_name)
 
@@ -159,6 +159,7 @@ class ChannelBot:
             self.hold_channel
         )
         self.bot.command(name="cbimport", help="Import a channel")(self.import_channel)
+        self.bot.command(name="cborphan", help="Orphan a channel")(self.orphan_channel)
         self.bot.loop.create_task(self.update_loop())
 
     def run(self):
@@ -196,7 +197,7 @@ class ChannelBot:
 
         async with lock(guild.id, channel.id):
             if channel.members:
-                await update_child_channel(guild, managed_channel)
+                await update_channel_name(guild, managed_channel)
                 return
 
             if not managed_channel.config.is_expired:
@@ -302,7 +303,8 @@ class ChannelBot:
 
         self.db.insert_channel(managed_channel)
         await message.channel.send("Template updated")
-        await update_child_channel(guild, managed_channel)
+        await update_channel_name(guild, managed_channel)
+
 
     @channel_only_command("cblimit")
     async def limit_channel(self, ctx: Context, *args: str):
@@ -386,6 +388,11 @@ class ChannelBot:
         guild: Guild = ctx.guild
         author: Member = message.author
         channel: VoiceChannel = author.voice.channel
+
+        if not author.guild_permissions.manage_channels:
+            await message.channel.send("Error: You do not have permissions to manage channels")
+            return
+
         try:
             _ = self.db.get_channel(guild.id, channel.id)
         except KeyError:
@@ -400,6 +407,26 @@ class ChannelBot:
         )
         self.db.insert_channel(imported_channel)
         await message.channel.send("Channel imported")
+
+    @channel_only_command("cborphan")
+    async def orphan_channel(self, ctx: Context, *args: str):
+        message: Message = ctx.message
+        guild: Guild = ctx.guild
+        author: Member = message.author
+        channel: VoiceChannel = author.voice.channel
+
+        if not author.guild_permissions.manage_channels:
+            await message.channel.send("Error: You do not have permissions to manage channels")
+            return
+
+        try:
+            managed_channel = self.db.get_channel(guild.id, channel.id)
+        except KeyError:
+            await message.channel.send("Error: The channel you are in is already not managed by ChannelBot")
+            return
+
+        self.db.remove_channel(managed_channel)
+        await message.channel.send("Channel orphaned")
 
     @async_loop(minutes=1)
     async def update_loop(self):
@@ -438,8 +465,8 @@ class ChannelBot:
                     self.db.remove_channel(channel)
                     continue
 
-                if channel.config.channel_type == ManagedChannelType.CHILD:
-                    await update_child_channel(guild, channel)
+                if channel.config.channel_type in {ManagedChannelType.CHILD, ManagedChannelType.IMPORT}:
+                    await update_channel_name(guild, channel)
                     continue
 
                 if channel.config.channel_type == ManagedChannelType.SPAWNER:
