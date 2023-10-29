@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections import Counter
+from contextlib import suppress
 from datetime import timedelta, datetime
 from functools import wraps, lru_cache
 from string import Template
@@ -26,10 +27,6 @@ from discord.ext.commands import Context, CommandNotFound
 
 from channelbot.data import ManagedChannelType, ChannelConfig, ManagedChannel
 from channelbot.db import ChannelDatabase
-
-
-def apply_template():
-    pass
 
 
 async def spawn_channel(spawner: ManagedChannel, guild: Guild, db: ChannelDatabase, *members: Member) -> ManagedChannel:
@@ -203,10 +200,8 @@ class ChannelBot:
             if not managed_channel.config.is_expired:
                 return
 
-            try:
+            with suppress(NotFound):
                 await channel.delete()
-            except NotFound:
-                pass
             self.db.remove_channel(managed_channel)
 
     async def on_voice_state_update(self, member: Member, before: VoiceState, after: VoiceState):
@@ -399,6 +394,7 @@ class ChannelBot:
             pass
         else:
             await message.channel.send("Error: The channel you are in is already ChannelBot-managed")
+            return
 
         imported_channel = ManagedChannel(
             guild_id=guild.id,
@@ -438,18 +434,14 @@ class ChannelBot:
             guild = self.bot.get_guild(channel.guild_id)
             if guild is None:
                 print("Removing invalid channel (no guild)")
-                try:
+                with suppress(KeyError):
                     self.db.remove_channel(channel)
-                except KeyError:
-                    pass
                 continue
             voice_channel = channel.voice_channel(guild)
             if voice_channel is None:
                 print("Removing invalid channel (no channel)")
-                try:
+                with suppress(KeyError):
                     self.db.remove_channel(channel)
-                except KeyError:
-                    pass
                 continue
 
             async with lock(guild.id, voice_channel.id):
@@ -458,11 +450,9 @@ class ChannelBot:
                     and len(voice_channel.members) == 0
                     and channel.config.is_expired
                 ):
-                    try:
+                    with suppress(NotFound, KeyError):
                         await voice_channel.delete(reason="Automated channel cleanup")
-                    except NotFound:
-                        pass
-                    self.db.remove_channel(channel)
+                        self.db.remove_channel(channel)
                     continue
 
                 if channel.config.channel_type in {ManagedChannelType.CHILD, ManagedChannelType.IMPORT}:
